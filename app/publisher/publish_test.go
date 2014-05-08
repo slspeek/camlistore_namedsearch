@@ -141,7 +141,7 @@ func (fc *fakeClient) Post(url string, bodyType string, body io.Reader) error {
 func TestPublishURLs(t *testing.T) {
 	rootName := "foo"
 	idxd := setupContent(rootName)
-	sh := search.NewHandler(idxd.Index, idxd.SignerBlobRef)
+	sh := search.NewHandler(idxd.Index, idxd.Index, idxd.SignerBlobRef)
 	corpus, err := idxd.Index.KeepInMemory()
 	if err != nil {
 		t.Fatalf("error slurping index to memory: %v", err)
@@ -195,7 +195,7 @@ func TestPublishMembers(t *testing.T) {
 	rootName := "foo"
 	idxd := setupContent(rootName)
 
-	sh := search.NewHandler(idxd.Index, idxd.SignerBlobRef)
+	sh := search.NewHandler(idxd.Index, idxd.Index, idxd.SignerBlobRef)
 	corpus, err := idxd.Index.KeepInMemory()
 	if err != nil {
 		t.Fatalf("error slurping index to memory: %v", err)

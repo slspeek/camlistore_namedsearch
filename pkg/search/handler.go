@@ -18,8 +18,10 @@ package search
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -30,9 +32,12 @@ import (
 
 	"camlistore.org/pkg/blob"
 	"camlistore.org/pkg/blobserver"
+	"camlistore.org/pkg/context"
 	"camlistore.org/pkg/httputil"
 	"camlistore.org/pkg/index"
 	"camlistore.org/pkg/jsonconfig"
+	"camlistore.org/pkg/jsonsign"
+	"camlistore.org/pkg/schema"
 	"camlistore.org/pkg/types"
 	"camlistore.org/pkg/types/camtypes"
 )
@@ -53,8 +58,9 @@ func init() {
 
 // Handler handles search queries.
 type Handler struct {
-	index index.Interface
-	owner blob.Ref
+	index           index.Interface
+	storageAndIndex blobserver.Storage
+	owner           blob.Ref
 
 	// Corpus optionally specifies the full in-memory metadata corpus
 	// to use.
@@ -79,14 +85,16 @@ var (
 	_ IGetRecentPermanodes = (*Handler)(nil)
 )
 
-func NewHandler(index index.Interface, owner blob.Ref) *Handler {
+func NewHandler(index index.Interface, storageAndIndex blobserver.Storage, owner blob.Ref) *Handler {
 	sh := &Handler{
-		index: index,
-		owner: owner,
+		index:           index,
+		storageAndIndex: storageAndIndex,
+		owner:           owner,
 	}
 	sh.wsHub = newWebsocketHub(sh)
 	go sh.wsHub.run()
 	sh.subscribeToNewBlobs()
+	replaceKeyword(newNamedSearch(sh))
 	return sh
 }
 
@@ -110,6 +118,8 @@ func (h *Handler) SetCorpus(c *index.Corpus) {
 func newHandlerFromConfig(ld blobserver.Loader, conf jsonconfig.Obj) (http.Handler, error) {
 	indexPrefix := conf.RequiredString("index") // TODO: add optional help tips here?
 	ownerBlobStr := conf.RequiredString("owner")
+	storageAndIndexPrefix := conf.RequiredString("storageAndIndex")
+
 	devBlockStartupPrefix := conf.OptionalString("devBlockStartupOn", "")
 	slurpToMemory := conf.OptionalBool("slurpToMemory", false)
 	if err := conf.Validate(); err != nil {
@@ -121,6 +131,11 @@ func newHandlerFromConfig(ld blobserver.Loader, conf jsonconfig.Obj) (http.Handl
 		if err != nil {
 			return nil, fmt.Errorf("search handler references bogus devBlockStartupOn handler %s: %v", devBlockStartupPrefix, err)
 		}
+	}
+
+	storageAndIndexHandler, err := ld.GetStorage(storageAndIndexPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("search config references unknown handler %q", storageAndIndexPrefix)
 	}
 
 	indexHandler, err := ld.GetHandler(indexPrefix)
@@ -136,15 +151,16 @@ func newHandlerFromConfig(ld blobserver.Loader, conf jsonconfig.Obj) (http.Handl
 		return nil, fmt.Errorf("search 'owner' has malformed blobref %q; expecting e.g. sha1-xxxxxxxxxxxx",
 			ownerBlobStr)
 	}
-	h := NewHandler(indexer, ownerBlobRef)
+	ii := indexer.(*index.Index)
+	h := NewHandler(ii, storageAndIndexHandler, ownerBlobRef)
 	if slurpToMemory {
-		ii := indexer.(*index.Index)
 		corpus, err := ii.KeepInMemory()
 		if err != nil {
 			return nil, fmt.Errorf("error slurping index to memory: %v", err)
 		}
 		h.corpus = corpus
 	}
+
 	return h, nil
 }
 
@@ -170,6 +186,7 @@ var getHandler = map[string]func(*Handler, http.ResponseWriter, *http.Request){
 	"describe":        (*Handler).serveDescribe,
 	"claims":          (*Handler).serveClaims,
 	"files":           (*Handler).serveFiles,
+	"getnamed":        (*Handler).serveGetNamed,
 	"signerattrvalue": (*Handler).serveSignerAttrValue,
 	"signerpaths":     (*Handler).serveSignerPaths,
 	"edgesto":         (*Handler).serveEdgesTo,
@@ -178,6 +195,7 @@ var getHandler = map[string]func(*Handler, http.ResponseWriter, *http.Request){
 var postHandler = map[string]func(*Handler, http.ResponseWriter, *http.Request){
 	"describe": (*Handler).serveDescribe,
 	"query":    (*Handler).serveQuery,
+	"setnamed": (*Handler).serveSetNamed,
 }
 
 func (sh *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
@@ -367,6 +385,30 @@ func (r *EdgesRequest) fromHTTP(req *http.Request) {
 // TODO(mpl): it looks like we never populate RecentResponse.Error*, shouldn't we remove them?
 // Same for WithAttrResponse. I suppose it doesn't matter much if we end up removing GetRecentPermanodes anyway...
 
+// GetNamedRequest is a request to get the substitute for a named:foo expression
+type GetNamedRequest struct {
+	Named string
+}
+
+func (sr *GetNamedRequest) fromHTTP(req *http.Request) {
+	sr.Named = req.FormValue("named")
+}
+
+// SetNamedRequest is a request to set the substitute for a named:foo expression
+type SetNamedRequest struct {
+	Named      string
+	Substitute string
+}
+
+func (sr *SetNamedRequest) fromHTTP(req *http.Request) {
+	sr.Named = req.FormValue("named")
+	body, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		panic(err)
+	}
+	sr.Substitute = string(body)
+}
+
 // RecentResponse is the JSON response from $searchRoot/camli/search/recent.
 type RecentResponse struct {
 	Recent []*RecentItem `json:"recent"`
@@ -456,6 +498,20 @@ type EdgesResponse struct {
 type EdgeItem struct {
 	From     blob.Ref `json:"from"`
 	FromType string   `json:"fromType"`
+}
+
+// GetNamedResponse is the JSON response from $searchRoot/camli/search/getnamed.
+type GetNamedResponse struct {
+	Named      string   `json:"named"`
+	Substitute string   `json:"substitute"`
+	PermaRef   blob.Ref `json:"permaRef"`
+	SubstRef   blob.Ref `json:"substRef"`
+}
+
+// SetNamedResponse is the JSON response from $searchRoot/camli/search/setnamed.
+type SetNamedResponse struct {
+	PermaRef blob.Ref `json:"permaRef"`
+	SubstRef blob.Ref `json:"substRef"`
 }
 
 func thumbnailSize(r *http.Request) int {
@@ -845,6 +901,156 @@ func (sh *Handler) serveSignerPaths(rw http.ResponseWriter, req *http.Request) {
 	sr.fromHTTP(req)
 
 	res, err := sh.GetSignerPaths(&sr)
+	if err != nil {
+		httputil.ServeJSONError(rw, err)
+		return
+	}
+	httputil.ReturnJSON(rw, res)
+}
+
+func evalSearchInput(in string) (*Constraint, error) {
+	if len(in) == 0 {
+		return nil, fmt.Errorf("empty expression")
+	}
+	if strings.HasPrefix(in, "{") && strings.HasSuffix(in, "}") {
+		cs := new(Constraint)
+		if err := json.NewDecoder(strings.NewReader(in)).Decode(&cs); err != nil {
+			return nil, err
+		}
+		return cs, nil
+	} else {
+		sq, err := parseExpression(context.TODO(), in)
+		if err != nil {
+			return nil, err
+		}
+		return sq.Constraint.Logical.B, nil
+	}
+}
+
+// SetNamed creates or modifies a search expression alias.
+func (sh *Handler) SetNamed(r *SetNamedRequest) (*SetNamedResponse, error) {
+	if _, err := evalSearchInput(r.Substitute); err != nil {
+		return nil, err
+	}
+	ssref, err := sh.receiveString(r.Substitute)
+	if err != nil {
+		return nil, err
+	}
+	sref := ssref.Ref
+
+	var pn blob.Ref
+	claims := []*schema.Builder{}
+	gr, err := sh.GetNamed(&GetNamedRequest{Named: r.Named})
+	if err == nil {
+		pn = gr.PermaRef
+	} else {
+		pnSRef, err := sh.receiveAndSign(schema.NewUnsignedPermanode())
+		if err != nil {
+			return nil, err
+		}
+		pn = pnSRef.Ref
+		claims = append(claims, schema.NewSetAttributeClaim(pn, "camliNamedSearch", r.Named))
+		claims = append(claims, schema.NewSetAttributeClaim(pn, "title", fmt.Sprintf("named:%s", r.Named)))
+	}
+	claims = append(claims, schema.NewSetAttributeClaim(pn, "camliContent", sref.String()))
+	for _, claimBuilder := range claims {
+		_, err := sh.receiveAndSign(claimBuilder)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &SetNamedResponse{PermaRef: pn, SubstRef: sref}, nil
+}
+
+func (sh *Handler) receiveAndSign(b *schema.Builder) (*blob.SizedRef, error) {
+	b.SetSigner(sh.owner)
+	unsigned, err := b.JSON()
+	if err != nil {
+		return nil, err
+	}
+	sr := &jsonsign.SignRequest{
+		UnsignedJSON:  unsigned,
+		Fetcher:       sh.storageAndIndex,
+		SignatureTime: time.Now(),
+	}
+	signed, err := sr.Sign()
+	if err != nil {
+		return nil, err
+	}
+	sref, err := sh.receiveString(signed)
+	if err != nil {
+		return nil, err
+	}
+	return sref, nil
+}
+
+func (sh *Handler) receiveString(s string) (*blob.SizedRef, error) {
+	sref, err := blobserver.ReceiveString(sh.storageAndIndex, s)
+	if err != nil {
+		return nil, err
+	}
+	return &sref, nil
+}
+
+func (sh *Handler) serveSetNamed(rw http.ResponseWriter, req *http.Request) {
+	defer httputil.RecoverJSON(rw, req)
+	r := new(SetNamedRequest)
+	r.fromHTTP(req)
+
+	res, err := sh.SetNamed(r)
+	if err != nil {
+		httputil.ServeJSONError(rw, err)
+		return
+	}
+	httputil.ReturnJSON(rw, res)
+}
+
+// GetNamed displays the search expression or constraint json for the requested alias.
+func (sh *Handler) GetNamed(r *GetNamedRequest) (*GetNamedResponse, error) {
+	sr, err := sh.Query(&SearchQuery{
+		Constraint: &Constraint{
+			Permanode: &PermanodeConstraint{
+				Attr:  "camliNamedSearch",
+				Value: r.Named,
+			},
+		},
+		Describe: &DescribeRequest{},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(sr.Blobs) < 1 {
+		return nil, fmt.Errorf("No named search found for: %s", r.Named)
+	}
+	res := new(GetNamedResponse)
+	res.Named = r.Named
+	res.PermaRef = sr.Blobs[0].Blob
+	substRefS := sr.Describe.Meta.Get(res.PermaRef).Permanode.Attr.Get("camliContent")
+	br, ok := blob.Parse(substRefS)
+	if !ok {
+		return nil, fmt.Errorf("Invalid blob ref: %s", substRefS)
+	}
+
+	reader, _, err := sh.storageAndIndex.Fetch(br)
+	if err != nil {
+		return nil, err
+	}
+	result, err := ioutil.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	res.Substitute = string(result)
+	res.SubstRef = br
+	return res, nil
+}
+
+func (sh *Handler) serveGetNamed(rw http.ResponseWriter, req *http.Request) {
+	defer httputil.RecoverJSON(rw, req)
+	var sr GetNamedRequest
+	sr.fromHTTP(req)
+
+	res, err := sh.GetNamed(&sr)
 	if err != nil {
 		httputil.ServeJSONError(rw, err)
 		return

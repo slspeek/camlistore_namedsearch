@@ -580,8 +580,9 @@ func (b *lowBuilder) genLowLevelPrefixes() error {
 			return err
 		}
 		searchArgs := args{
-			"index": "/index/",
-			"owner": owner.String(),
+			"index":           "/index/",
+			"owner":           owner.String(),
+			"storageAndIndex": "/bs-and-index/",
 		}
 		if b.memoryIndex() {
 			searchArgs["slurpToMemory"] = true

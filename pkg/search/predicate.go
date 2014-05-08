@@ -85,6 +85,17 @@ func registerKeyword(k keyword) {
 	keywords = append(keywords, k)
 }
 
+// ReplaceKeyword is used by keyword implementations that must be instanstiated late (after init ran).
+func replaceKeyword(repl keyword) {
+	name := repl.Name()
+	for i, k := range keywords {
+		if name == k.Name() {
+			keywords[i] = repl
+			break
+		}
+	}
+}
+
 // SearchHelp returns JSON of an array of predicate names and descriptions.
 func SearchHelp() string {
 	type help struct{ Name, Description string }
@@ -124,6 +135,10 @@ func init() {
 	// Location predicates
 	registerKeyword(newHasLocation())
 	registerKeyword(newLocation())
+
+	// A powerless instance is registered now for the docs.
+	// A real instance is re-registered in NewHandler.
+	registerKeyword(newNamedSearch(nil))
 }
 
 // Helper implementation for mixing into keyword implementations
@@ -554,6 +569,33 @@ func (h hasLocation) Predicate(ctx *context.Context, args []string) (*Constraint
 		},
 	}
 	return orConst(fileLoc, permLoc), nil
+}
+
+// NamedSearch depends on the Handler therefor it must be registered late
+type namedSearch struct {
+	matchPrefix
+	sh *Handler
+}
+
+func newNamedSearch(sh *Handler) keyword {
+	return namedSearch{newMatchPrefix("named"), sh}
+}
+
+func (n namedSearch) Description() string {
+	return "Uses substitution of a predefined search. Set with $searchRoot/camli/search/setnamed?name=foo&substitute=attr:bar:baz" +
+		"\nSee what the substitute is with $searchRoot/camli/search/getnamed?named=foo"
+}
+
+func (n namedSearch) Predicate(ctx *context.Context, args []string) (*Constraint, error) {
+	return n.namedConstraint(args[0])
+}
+
+func (n namedSearch) namedConstraint(name string) (*Constraint, error) {
+	snr, err := n.sh.GetNamed(&GetNamedRequest{name})
+	if err != nil {
+		return nil, err
+	}
+	return evalSearchInput(snr.Substitute)
 }
 
 // Helpers
