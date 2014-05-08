@@ -567,6 +567,54 @@ func (c *Client) SearchExistingFileSchema(wholeRef blob.Ref) (blob.Ref, error) {
 	return blob.Ref{}, nil
 }
 
+// SetNamedSearch creates or modifies a search expression alias.
+func (c *Client) SetNamedSearch(n *search.SetNamedRequest) (*search.SetNamedResponse, error) {
+	sr, err := c.SearchRoot()
+	if err != nil {
+		return nil, err
+	}
+	url := sr + "camli/search/setnamed?named=" + n.Named + "&substitute=" + n.Substitute
+	req := c.newRequest("GET", url)
+	res, err := c.doReqGated(req)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode != 200 {
+		body, _ := ioutil.ReadAll(io.LimitReader(res.Body, 1<<20))
+		res.Body.Close()
+		return nil, fmt.Errorf("client: got status code %d from URL %s; body %s", res.StatusCode, url, body)
+	}
+	var ress search.SetNamedResponse
+	if err := httputil.DecodeJSON(res, &ress); err != nil {
+		return nil, fmt.Errorf("client: error parsing JSON from URL %s: %v", url, err)
+	}
+	return &ress, nil
+}
+
+// GetNamedSearch returns the substitute for a given search alias.
+func (c *Client) GetNamedSearch(n *search.GetNamedRequest) (*search.GetNamedResponse, error) {
+	sr, err := c.SearchRoot()
+	if err != nil {
+		return nil, err
+	}
+	url := sr + "camli/search/getnamed?named=" + n.Named
+	req := c.newRequest("GET", url)
+	res, err := c.doReqGated(req)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode != 200 {
+		body, _ := ioutil.ReadAll(io.LimitReader(res.Body, 1<<20))
+		res.Body.Close()
+		return nil, fmt.Errorf("client: got status code %d from URL %s; body %s", res.StatusCode, url, body)
+	}
+	var ress search.GetNamedResponse
+	if err := httputil.DecodeJSON(res, &ress); err != nil {
+		return nil, fmt.Errorf("client: error parsing JSON from URL %s: %v", url, err)
+	}
+	return &ress, nil
+}
+
 // FileHasContents returns true iff f refers to a "file" or "bytes" schema blob,
 // the server is configured with a "download helper", and the server responds
 // that all chunks of 'f' are available and match the digest of wholeRef.
