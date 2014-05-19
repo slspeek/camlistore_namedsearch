@@ -56,9 +56,8 @@ func init() {
 
 // Handler handles search queries.
 type Handler struct {
-	index   index.Interface
-	owner   blob.Ref
-	storage blobserver.Storage
+	index *index.Index
+	owner blob.Ref
 
 	// Corpus optionally specifies the full in-memory metadata corpus
 	// to use.
@@ -83,11 +82,10 @@ var (
 	_ IGetRecentPermanodes = (*Handler)(nil)
 )
 
-func NewHandler(index index.Interface, storage blobserver.Storage, owner blob.Ref) *Handler {
+func NewHandler(index *index.Index, owner blob.Ref) *Handler {
 	sh := &Handler{
-		index:   index,
-		owner:   owner,
-		storage: storage,
+		index: index,
+		owner: owner,
 	}
 	sh.wsHub = newWebsocketHub(sh)
 	go sh.wsHub.run()
@@ -144,7 +142,7 @@ func newHandlerFromConfig(ld blobserver.Loader, conf jsonconfig.Obj) (http.Handl
 			ownerBlobStr)
 	}
 	ii := indexer.(*index.Index)
-	h := NewHandler(indexer, ii.BlobSource.(blobserver.Storage), ownerBlobRef)
+	h := NewHandler(ii, ownerBlobRef)
 	if slurpToMemory {
 		corpus, err := ii.KeepInMemory()
 		if err != nil {
@@ -983,7 +981,7 @@ func (sh *Handler) receiveAndSign(b *schema.Builder) (*blob.SizedRef, error) {
 	}
 	sr := &jsonsign.SignRequest{
 		UnsignedJSON:  unsigned,
-		Fetcher:       sh.storage,
+		Fetcher:       sh.index.BlobSource,
 		SignatureTime: time.Now(),
 	}
 	signed, err := sr.Sign()
@@ -995,7 +993,7 @@ func (sh *Handler) receiveAndSign(b *schema.Builder) (*blob.SizedRef, error) {
 }
 
 func (sh *Handler) receiveString(s string) (*blob.SizedRef, error) {
-	sref, err := blobserver.ReceiveString(sh.storage, s)
+	sref, err := blobserver.ReceiveString(sh.index, s)
 	if err != nil {
 		return nil, err
 	}
@@ -1040,7 +1038,7 @@ func (sh *Handler) GetNamed(r *GetNamedRequest) (*GetNamedResponse, error) {
 	if !ok {
 		return nil, fmt.Errorf("Invalid blob ref: %s", substRefS)
 	}
-	reader, _, err := sh.storage.Fetch(br)
+	reader, _, err := sh.index.Fetch(br)
 	if err != nil {
 		return nil, err
 	}
