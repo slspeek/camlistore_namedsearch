@@ -56,7 +56,7 @@ func init() {
 
 // Handler handles search queries.
 type Handler struct {
-	index *index.Index
+	index index.Interface
 	owner blob.Ref
 
 	// Corpus optionally specifies the full in-memory metadata corpus
@@ -82,7 +82,7 @@ var (
 	_ IGetRecentPermanodes = (*Handler)(nil)
 )
 
-func NewHandler(index *index.Index, owner blob.Ref) *Handler {
+func NewHandler(index index.Interface, owner blob.Ref) *Handler {
 	sh := &Handler{
 		index: index,
 		owner: owner,
@@ -981,7 +981,7 @@ func (sh *Handler) receiveAndSign(b *schema.Builder) (*blob.SizedRef, error) {
 	}
 	sr := &jsonsign.SignRequest{
 		UnsignedJSON:  unsigned,
-		Fetcher:       sh.index.BlobSource,
+		Fetcher:       sh.index.(*index.Index).BlobSource,
 		SignatureTime: time.Now(),
 	}
 	signed, err := sr.Sign()
@@ -993,7 +993,10 @@ func (sh *Handler) receiveAndSign(b *schema.Builder) (*blob.SizedRef, error) {
 }
 
 func (sh *Handler) receiveString(s string) (*blob.SizedRef, error) {
-	sref, err := blobserver.ReceiveString(sh.index, s)
+	if _, err := blobserver.ReceiveString(sh.index.(*index.Index), s); err != nil {
+		return nil, err
+	}
+	sref, err := blobserver.ReceiveString(sh.index.(*index.Index).BlobSource.(blobserver.Storage), s)
 	if err != nil {
 		return nil, err
 	}
@@ -1027,6 +1030,7 @@ func (sh *Handler) GetNamed(r *GetNamedRequest) (*GetNamedResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if len(sr.Blobs) < 1 {
 		return nil, fmt.Errorf("No named search found for: %s", r.Named)
 	}
@@ -1038,7 +1042,8 @@ func (sh *Handler) GetNamed(r *GetNamedRequest) (*GetNamedResponse, error) {
 	if !ok {
 		return nil, fmt.Errorf("Invalid blob ref: %s", substRefS)
 	}
-	reader, _, err := sh.index.Fetch(br)
+
+	reader, _, err := sh.index.(*index.Index).BlobSource.Fetch(br)
 	if err != nil {
 		return nil, err
 	}

@@ -22,12 +22,14 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSetNamed(t *testing.T) {
 	test.BrokenTest(t)
 	w := test.GetWorld(t)
 
+	t.Log(w.Addr())
 	setCmd := w.Cmd("camtool", "searchnames", "foo", "is:pano")
 	sno, err := test.RunCmd(setCmd)
 	if err != nil {
@@ -35,6 +37,13 @@ func TestSetNamed(t *testing.T) {
 	}
 	t.Logf("Server responded to setname with: %v", sno)
 
+	time.Sleep(1 * time.Second)
+	setCmd = w.Cmd("camtool", "searchnames", "bar", "is:image")
+	sno, err = test.RunCmd(setCmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Server responded to setname with: %v", sno)
 	getCmd := w.Cmd("camtool", "searchnames", "foo")
 	gno, err := test.RunCmd(getCmd)
 	if err != nil {
