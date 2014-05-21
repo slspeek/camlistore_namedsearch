@@ -14,50 +14,34 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package search
+package search_test
 
 import (
-	"bytes"
+	"bufio"
 	"camlistore.org/pkg/test"
-	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 )
 
+func runCmd(t *testing.T, w *test.World, cmd string, args ...string) string {
+	setCmd := w.Cmd(cmd, args...)
+	out, err := test.RunCmd(setCmd)
+	if err != nil {
+		t.Fatalf("Error running cmd:%v,\n%v\n", cmd, err)
+	}
+	return out
+}
+
 func TestSetNamed(t *testing.T) {
-	test.BrokenTest(t)
 	w := test.GetWorld(t)
+	//Needed to upload the owner public key
+	runCmd(t, w, "camput", "permanode")
 
-	t.Log(w.Addr())
-	setCmd := w.Cmd("camtool", "searchnames", "foo", "is:pano")
-	sno, err := test.RunCmd(setCmd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("Server responded to setname with: %v", sno)
-
-	time.Sleep(1 * time.Second)
-	setCmd = w.Cmd("camtool", "searchnames", "bar", "is:image")
-	sno, err = test.RunCmd(setCmd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("Server responded to setname with: %v", sno)
-	getCmd := w.Cmd("camtool", "searchnames", "foo")
-	gno, err := test.RunCmd(getCmd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("Returned from getnamed: %s", gno)
-
-	var gnr GetNamedResponse
-	err = json.Unmarshal(bytes.NewBufferString(gno).Bytes(), &gnr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gnr.Named != "foo" || gnr.Substitute != "is:pano" {
-		t.Errorf("Unexpected value %v , expected (foo, is:pano)", gnr)
+	runCmd(t, w, "camtool", "searchnames", "bar", "is:image and tag:bar")
+	gno := runCmd(t, w, "camtool", "searchnames", "bar")
+	gnr := parseJSON(gno)
+	if gnr["named"] != "bar" || gnr["substitute"] != "is:image and tag:bar" {
+		t.Errorf("Unexpected value %v , expected (bar, is:image and tag:bar)", gnr)
 	}
 }
 
@@ -71,37 +55,31 @@ func TestGetNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	permanodeCmd := w.Cmd("camput", "permanode")
-	pn, err := test.RunCmd(permanodeCmd)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	setNamedCmd := w.Cmd("camput", "attr", strings.TrimSpace(pn), "camliNamedSearch", "foo")
-	_, err = test.RunCmd(setNamedCmd)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	setConCmd := w.Cmd("camput", "attr", strings.TrimSpace(pn), "camliContent", strings.TrimSpace(ref))
-	_, err = test.RunCmd(setConCmd)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	getCmd := w.Cmd("camtool", "searchnames", "foo")
-	gno, err := test.RunCmd(getCmd)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("Returned from getnamed: %s", gno)
-
-	var gnr GetNamedResponse
-	err = json.Unmarshal(bytes.NewBufferString(gno).Bytes(), &gnr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gnr.Named != "foo" || gnr.Substitute != "is:pano" {
+	pn := runCmd(t, w, "camput", "permanode")
+	runCmd(t, w, "camput", "attr", strings.TrimSpace(pn), "camliNamedSearch", "foo")
+	runCmd(t, w, "camput", "attr", strings.TrimSpace(pn), "camliContent", strings.TrimSpace(ref))
+	gno := runCmd(t, w, "camtool", "searchnames", "foo")
+	gnr := parseJSON(gno)
+	if gnr["named"] != "foo" || gnr["substitute"] != "is:pano" {
 		t.Errorf("Unexpected value %v , expected (foo, is:pano)", gnr)
+	}
+}
+
+func TestNamedSearch(t *testing.T) {
+	w := test.GetWorld(t)
+
+	runCmd(t, w, "camtool", "searchnames", "favorite", "tag:cats")
+	runCmd(t, w, "camput", "permanode", "-title", "Felix", "-tag", "cats")
+	pn := runCmd(t, w, "camput", "permanode", "-title", "Felix", "-tag", "cats")
+	_, lines, err := bufio.ScanLines([]byte(pn), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pn = string(lines[0])
+
+	sr := runCmd(t, w, "camtool", "search", "named:favorite")
+
+	if !strings.Contains(sr, pn) {
+		t.Fatalf("Expected %v in %v", pn, sr)
 	}
 }

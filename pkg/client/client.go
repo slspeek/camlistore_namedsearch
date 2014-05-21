@@ -573,8 +573,8 @@ func (c *Client) SetNamedSearch(n *search.SetNamedRequest) (*search.SetNamedResp
 	if err != nil {
 		return nil, err
 	}
-	url := sr + "camli/search/setnamed?named=" + n.Named + "&substitute=" + n.Substitute
-	req := c.newRequest("GET", url)
+	url := sr + "camli/search/setnamed?named=" + n.Named
+	req := c.newRequest("POST", url, strings.NewReader(n.Substitute))
 	res, err := c.doReqGated(req)
 	if err != nil {
 		return nil, err

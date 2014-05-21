@@ -177,7 +177,6 @@ var getHandler = map[string]func(*Handler, http.ResponseWriter, *http.Request){
 	"claims":          (*Handler).serveClaims,
 	"files":           (*Handler).serveFiles,
 	"getnamed":        (*Handler).serveGetNamed,
-	"setnamed":        (*Handler).serveSetNamed,
 	"signerattrvalue": (*Handler).serveSignerAttrValue,
 	"signerpaths":     (*Handler).serveSignerPaths,
 	"edgesto":         (*Handler).serveEdgesTo,
@@ -186,6 +185,7 @@ var getHandler = map[string]func(*Handler, http.ResponseWriter, *http.Request){
 var postHandler = map[string]func(*Handler, http.ResponseWriter, *http.Request){
 	"describe": (*Handler).serveDescribe,
 	"query":    (*Handler).serveQuery,
+	"setnamed": (*Handler).serveSetNamed,
 }
 
 func (sh *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
@@ -392,7 +392,11 @@ type SetNamedRequest struct {
 
 func (sr *SetNamedRequest) fromHTTP(req *http.Request) {
 	sr.Named = req.FormValue("named")
-	sr.Substitute = req.FormValue("substitute")
+	body, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		panic(err)
+	}
+	sr.Substitute = string(body)
 }
 
 // RecentResponse is the JSON response from $searchRoot/camli/search/recent.
@@ -985,6 +989,9 @@ func (sh *Handler) receiveAndSign(b *schema.Builder) (*blob.SizedRef, error) {
 		SignatureTime: time.Now(),
 	}
 	signed, err := sr.Sign()
+	if err != nil {
+		return nil, err
+	}
 	sref, err := sh.receiveString(signed)
 	if err != nil {
 		return nil, err
