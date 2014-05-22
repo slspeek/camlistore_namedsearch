@@ -576,23 +576,7 @@ func (n namedSearch) namedConstraint(name string) (*Constraint, error) {
 	if err != nil {
 		return nil, err
 	}
-	expr := snr.Substitute
-	if len(expr) == 0 {
-		return nil, fmt.Errorf("Empty expression for named:%s", name)
-	}
-	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
-		cs := new(Constraint)
-		if err := json.NewDecoder(strings.NewReader(expr)).Decode(&cs); err != nil {
-			return nil, err
-		}
-		return cs, nil
-	} else {
-		sq, err := parseExpression(context.TODO(), expr)
-		if err != nil {
-			return nil, err
-		}
-		return sq.Constraint.Logical.B, nil
-	}
+	return evalSearchInput(snr.Substitute)
 }
 
 // Helpers

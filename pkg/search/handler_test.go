@@ -691,7 +691,7 @@ func (ht handlerTest) test(t *testing.T) {
 	}
 
 	// TODO(sls) This inserted test.Fetcher is not connected to idx
-	h := NewHandler(fidx, indexOwner)
+	h := NewHandler(fidx, &test.Fetcher{}, indexOwner)
 
 	var body io.Reader
 	var method = "GET"

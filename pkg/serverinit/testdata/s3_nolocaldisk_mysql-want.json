@@ -69,7 +69,8 @@
 			"handlerArgs": {
 				"index": "/index/",
 				"owner": "sha1-f2b0b7da718b97ce8c31591d8ed4645c777f3ef4",
-				"slurpToMemory": true
+				"slurpToMemory": true,
+				"storageAndIndex": "/bs-and-index/"
 			}
 		},
 		"/setup/": {

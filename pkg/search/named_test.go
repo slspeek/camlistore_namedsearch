@@ -24,8 +24,7 @@ import (
 )
 
 func runCmd(t *testing.T, w *test.World, cmd string, args ...string) string {
-	setCmd := w.Cmd(cmd, args...)
-	out, err := test.RunCmd(setCmd)
+	out, err := test.RunCmd(w.Cmd(cmd, args...))
 	if err != nil {
 		t.Fatalf("Error running cmd:%v,\n%v\n", cmd, err)
 	}
@@ -65,6 +64,18 @@ func TestGetNamed(t *testing.T) {
 	}
 }
 
+func TestWrongInput(t *testing.T) {
+	w := test.GetWorld(t)
+	_, err := test.RunCmd(w.Cmd("camtool", "searchnames", "foo", "bar"))
+	if err != nil {
+		if !strings.Contains(err.Error(), "for literals") {
+			t.Fatal("Expected error about literals")
+		}
+	} else {
+		t.Fatal("Expected error about literals")
+	}
+}
+
 func TestNamedSearch(t *testing.T) {
 	w := test.GetWorld(t)
 
@@ -78,7 +89,6 @@ func TestNamedSearch(t *testing.T) {
 	pn = string(lines[0])
 
 	sr := runCmd(t, w, "camtool", "search", "named:favorite")
-
 	if !strings.Contains(sr, pn) {
 		t.Fatalf("Expected %v in %v", pn, sr)
 	}

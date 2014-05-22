@@ -543,8 +543,9 @@ func genLowLevelPrefixes(params *configPrefixesParams, ownerName string) (m json
 		}
 
 		searchArgs := map[string]interface{}{
-			"index": "/index/",
-			"owner": params.searchOwner.String(),
+			"index":           "/index/",
+			"owner":           params.searchOwner.String(),
+			"storageAndIndex": "/bs-and-index/",
 		}
 		if params.memoryIndex {
 			searchArgs["slurpToMemory"] = true
