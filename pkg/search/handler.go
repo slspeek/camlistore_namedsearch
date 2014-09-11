@@ -58,9 +58,10 @@ func init() {
 
 // Handler handles search queries.
 type Handler struct {
-	index           index.Interface
-	storageAndIndex blobserver.Storage
-	owner           blob.Ref
+	index index.Interface
+	owner blob.Ref
+	// optional for search aliases
+	storage blobserver.Storage
 
 	// Corpus optionally specifies the full in-memory metadata corpus
 	// to use.
@@ -85,17 +86,25 @@ var (
 	_ IGetRecentPermanodes = (*Handler)(nil)
 )
 
-func NewHandler(index index.Interface, storageAndIndex blobserver.Storage, owner blob.Ref) *Handler {
+func NewHandler(index index.Interface, owner blob.Ref) *Handler {
 	sh := &Handler{
-		index:           index,
-		storageAndIndex: storageAndIndex,
-		owner:           owner,
+		index: index,
+		owner: owner,
 	}
 	sh.wsHub = newWebsocketHub(sh)
 	go sh.wsHub.run()
 	sh.subscribeToNewBlobs()
-	replaceKeyword(newNamedSearch(sh))
 	return sh
+}
+
+func (sh *Handler) InitHandler(lh blobserver.FindHandlerByTyper) error {
+	_, handler, err := lh.FindHandlerByType("storage-cond")
+	if err != nil || handler == nil {
+		return nil
+	}
+	sh.storage = handler.(blobserver.Storage)
+	replaceKeyword(newNamedSearch(sh))
+	return nil
 }
 
 func (sh *Handler) subscribeToNewBlobs() {
@@ -118,7 +127,6 @@ func (h *Handler) SetCorpus(c *index.Corpus) {
 func newHandlerFromConfig(ld blobserver.Loader, conf jsonconfig.Obj) (http.Handler, error) {
 	indexPrefix := conf.RequiredString("index") // TODO: add optional help tips here?
 	ownerBlobStr := conf.RequiredString("owner")
-	storageAndIndexPrefix := conf.RequiredString("storageAndIndex")
 
 	devBlockStartupPrefix := conf.OptionalString("devBlockStartupOn", "")
 	slurpToMemory := conf.OptionalBool("slurpToMemory", false)
@@ -131,11 +139,6 @@ func newHandlerFromConfig(ld blobserver.Loader, conf jsonconfig.Obj) (http.Handl
 		if err != nil {
 			return nil, fmt.Errorf("search handler references bogus devBlockStartupOn handler %s: %v", devBlockStartupPrefix, err)
 		}
-	}
-
-	storageAndIndexHandler, err := ld.GetStorage(storageAndIndexPrefix)
-	if err != nil {
-		return nil, fmt.Errorf("search config references unknown handler %q", storageAndIndexPrefix)
 	}
 
 	indexHandler, err := ld.GetHandler(indexPrefix)
@@ -152,7 +155,7 @@ func newHandlerFromConfig(ld blobserver.Loader, conf jsonconfig.Obj) (http.Handl
 			ownerBlobStr)
 	}
 	ii := indexer.(*index.Index)
-	h := NewHandler(ii, storageAndIndexHandler, ownerBlobRef)
+	h := NewHandler(ii, ownerBlobRef)
 	if slurpToMemory {
 		corpus, err := ii.KeepInMemory()
 		if err != nil {
@@ -382,9 +385,6 @@ func (r *EdgesRequest) fromHTTP(req *http.Request) {
 	r.ToRef = httputil.MustGetBlobRef(req, "blobref")
 }
 
-// TODO(mpl): it looks like we never populate RecentResponse.Error*, shouldn't we remove them?
-// Same for WithAttrResponse. I suppose it doesn't matter much if we end up removing GetRecentPermanodes anyway...
-
 // GetNamedRequest is a request to get the substitute for a named:foo expression
 type GetNamedRequest struct {
 	Named string
@@ -408,6 +408,9 @@ func (sr *SetNamedRequest) fromHTTP(req *http.Request) {
 	}
 	sr.Substitute = string(body)
 }
+
+// TODO(mpl): it looks like we never populate RecentResponse.Error*, shouldn't we remove them?
+// Same for WithAttrResponse. I suppose it doesn't matter much if we end up removing GetRecentPermanodes anyway...
 
 // RecentResponse is the JSON response from $searchRoot/camli/search/recent.
 type RecentResponse struct {
@@ -929,6 +932,9 @@ func evalSearchInput(in string) (*Constraint, error) {
 
 // SetNamed creates or modifies a search expression alias.
 func (sh *Handler) SetNamed(r *SetNamedRequest) (*SetNamedResponse, error) {
+	if sh.storage == nil {
+		return nil, fmt.Errorf("SetNamed functionality not available")
+	}
 	if _, err := evalSearchInput(r.Substitute); err != nil {
 		return nil, err
 	}
@@ -970,7 +976,7 @@ func (sh *Handler) receiveAndSign(b *schema.Builder) (*blob.SizedRef, error) {
 	}
 	sr := &jsonsign.SignRequest{
 		UnsignedJSON:  unsigned,
-		Fetcher:       sh.storageAndIndex,
+		Fetcher:       sh.storage,
 		SignatureTime: time.Now(),
 	}
 	signed, err := sr.Sign()
@@ -985,7 +991,7 @@ func (sh *Handler) receiveAndSign(b *schema.Builder) (*blob.SizedRef, error) {
 }
 
 func (sh *Handler) receiveString(s string) (*blob.SizedRef, error) {
-	sref, err := blobserver.ReceiveString(sh.storageAndIndex, s)
+	sref, err := blobserver.ReceiveString(sh.storage, s)
 	if err != nil {
 		return nil, err
 	}
@@ -1007,6 +1013,9 @@ func (sh *Handler) serveSetNamed(rw http.ResponseWriter, req *http.Request) {
 
 // GetNamed displays the search expression or constraint json for the requested alias.
 func (sh *Handler) GetNamed(r *GetNamedRequest) (*GetNamedResponse, error) {
+	if sh.storage == nil {
+		return nil, fmt.Errorf("GetNamed functionality not available")
+	}
 	sr, err := sh.Query(&SearchQuery{
 		Constraint: &Constraint{
 			Permanode: &PermanodeConstraint{
@@ -1032,7 +1041,7 @@ func (sh *Handler) GetNamed(r *GetNamedRequest) (*GetNamedResponse, error) {
 		return nil, fmt.Errorf("Invalid blob ref: %s", substRefS)
 	}
 
-	reader, _, err := sh.storageAndIndex.Fetch(br)
+	reader, _, err := sh.storage.Fetch(br)
 	if err != nil {
 		return nil, err
 	}

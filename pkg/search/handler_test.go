@@ -684,14 +684,13 @@ func (ht handlerTest) test(t *testing.T) {
 	SetTestHookBug121(func() {})
 
 	fakeIndex := test.NewFakeIndex()
-	fidx := ht.setup(fakeIndex)
+	idx := ht.setup(fakeIndex)
+
 	indexOwner := owner
-	if io, ok := fidx.(indexOwnerer); ok {
+	if io, ok := idx.(indexOwnerer); ok {
 		indexOwner = io.IndexOwner()
 	}
-
-	// TODO(sls) This inserted test.Fetcher is not connected to idx
-	h := NewHandler(fidx, &test.Fetcher{}, indexOwner)
+	h := NewHandler(idx, indexOwner)
 
 	var body io.Reader
 	var method = "GET"

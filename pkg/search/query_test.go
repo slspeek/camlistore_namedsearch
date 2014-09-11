@@ -59,7 +59,7 @@ func querySetup(t test.TB) (*indextest.IndexDeps, *Handler) {
 	idx := index.NewMemoryIndex() // string key-value pairs in memory, as if they were on disk
 	id := indextest.NewIndexDeps(idx)
 	id.Fataler = t
-	h := NewHandler(idx, idx, id.SignerBlobRef)
+	h := NewHandler(idx, id.SignerBlobRef)
 	return id, h
 }
 
@@ -95,7 +95,7 @@ func testQueryType(t test.TB, fn func(*queryTest), itype indexType) {
 	}
 	qt.id.Fataler = t
 	qt.Handler = func() *Handler {
-		h := NewHandler(idx, idx, qt.id.SignerBlobRef)
+		h := NewHandler(idx, qt.id.SignerBlobRef)
 		if itype == indexCorpusScan {
 			if corpus, err = idx.KeepInMemory(); err != nil {
 				t.Fatal(err)

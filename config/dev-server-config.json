@@ -277,7 +277,6 @@
 			"handlerArgs": {
 				"index": ["_env", "${CAMLI_INDEXER_PATH}"],
 				"owner": ["_env", "${CAMLI_PUBKEY_BLOBREF}"],
-				"storageAndIndex": "/cond-unused/",
 				"slurpToMemory": true,
 				"devBlockStartupOn": "/sync-index/"
 			}
