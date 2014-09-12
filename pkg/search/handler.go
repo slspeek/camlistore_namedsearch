@@ -103,7 +103,7 @@ func (sh *Handler) InitHandler(lh blobserver.FindHandlerByTyper) error {
 		return nil
 	}
 	sh.storage = handler.(blobserver.Storage)
-	replaceKeyword(newNamedSearch(sh))
+	registerKeyword(newNamedSearch(sh))
 	return nil
 }
 

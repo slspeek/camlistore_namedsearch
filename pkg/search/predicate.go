@@ -85,17 +85,6 @@ func registerKeyword(k keyword) {
 	keywords = append(keywords, k)
 }
 
-// ReplaceKeyword is used by keyword implementations that must be instanstiated late (after init ran).
-func replaceKeyword(repl keyword) {
-	name := repl.Name()
-	for i, k := range keywords {
-		if name == k.Name() {
-			keywords[i] = repl
-			break
-		}
-	}
-}
-
 // SearchHelp returns JSON of an array of predicate names and descriptions.
 func SearchHelp() string {
 	type help struct{ Name, Description string }
@@ -135,10 +124,6 @@ func init() {
 	// Location predicates
 	registerKeyword(newHasLocation())
 	registerKeyword(newLocation())
-
-	// A powerless instance is registered now for the docs.
-	// A real instance is re-registered in NewHandler.
-	registerKeyword(newNamedSearch(nil))
 }
 
 // Helper implementation for mixing into keyword implementations
@@ -571,7 +556,7 @@ func (h hasLocation) Predicate(ctx *context.Context, args []string) (*Constraint
 	return orConst(fileLoc, permLoc), nil
 }
 
-// NamedSearch depends on the Handler therefor it must be registered late
+// NamedSearch lets you use the search aliases you defined with SetNamed from the search handler.
 type namedSearch struct {
 	matchPrefix
 	sh *Handler
